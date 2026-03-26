@@ -45,8 +45,8 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
-    environment:
-      VITE_API_URL: http://backend:5000/api
+    # VITE_API_URL: optional - defaults to relative path '/api' when behind Nginx proxy
+    # Only set if using non-standard backend location (e.g., http://backend:5000/api for Docker-only development)
     ports:
       - "3000:3000"
     volumes:
