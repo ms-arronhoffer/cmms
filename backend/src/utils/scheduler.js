@@ -4,6 +4,7 @@ import MaintenanceSchedule from '../models/MaintenanceSchedule.js';
 import ReportRecipient from '../models/ReportRecipient.js';
 import { generateHTMLReport } from './reportGenerator.js';
 import { sendEmailReport } from './mailer.js';
+import { generateAllFutureOccurrences } from '../services/recurringSchedule.js';
 
 /**
  * Initialize scheduled report jobs
@@ -105,6 +106,29 @@ export function initializeOverdueAlerts() {
 
   logger.info('Overdue maintenance alert job initialized (runs daily at 8:00 AM)');
 
+  return cronJob;
+}
+
+/**
+ * Initialize recurring schedule generation job
+ * Runs daily at 6:00 AM — fills in all future occurrences up to 14 months ahead.
+ */
+export function initializeRecurringScheduleJob() {
+  // Also run once immediately on startup so occurrences are ready right away
+  generateAllFutureOccurrences().catch((err) =>
+    logger.error(`[recurringSchedule] Startup run failed: ${err.message}`)
+  );
+
+  const cronJob = cron.schedule('0 6 * * *', async () => {
+    logger.info('[recurringSchedule] Daily generation job starting...');
+    try {
+      await generateAllFutureOccurrences();
+    } catch (err) {
+      logger.error(`[recurringSchedule] Daily generation job failed: ${err.message}`);
+    }
+  });
+
+  logger.info('[recurringSchedule] Daily occurrence generation job initialized (runs at 6:00 AM)');
   return cronJob;
 }
 

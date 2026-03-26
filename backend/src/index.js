@@ -16,7 +16,7 @@ import reportRecipientsRoutes from './routes/report-recipients.js';
 import reportsRoutes from './routes/reports.js';
 import usersRoutes from './routes/users.js';
 import logger from './utils/logger.js';
-import { initializeScheduledReports, initializeOverdueAlerts } from './utils/scheduler.js';
+import { initializeScheduledReports, initializeOverdueAlerts, initializeRecurringScheduleJob } from './utils/scheduler.js';
 
 // Load environment variables
 dotenv.config();
@@ -90,6 +90,7 @@ const server = app.listen(PORT, () => {
   // Initialize scheduled jobs
   initializeScheduledReports();
   initializeOverdueAlerts();
+  initializeRecurringScheduleJob();
 });
 
 // Graceful shutdown

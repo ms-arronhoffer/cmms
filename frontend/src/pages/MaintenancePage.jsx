@@ -46,6 +46,7 @@ export default function MaintenancePage() {
     estimatedCost: 0,
     actualCost: 0,
     assignedTo: '',
+    recurrenceType: 'None',
   });
 
   const isAdmin = user?.role === 'Admin' || user?.role === 'Manager';
@@ -85,6 +86,7 @@ export default function MaintenancePage() {
         estimatedCost: schedule.estimatedCost,
         actualCost: schedule.actualCost,
         assignedTo: schedule.assignedTo || '',
+        recurrenceType: schedule.recurrenceType || 'None',
       });
     } else {
       setEditingId(null);
@@ -97,6 +99,7 @@ export default function MaintenancePage() {
         estimatedCost: 0,
         actualCost: 0,
         assignedTo: '',
+        recurrenceType: 'None',
       });
     }
     setOpenDialog(true);
@@ -127,8 +130,11 @@ export default function MaintenancePage() {
     }
   };
 
-  const handleDelete = async (id) => {
-    if (window.confirm('Are you sure you want to delete this schedule?')) {
+  const handleDelete = async (id, isRoot) => {
+    const confirmMsg = isRoot
+      ? 'This is a recurring series. Delete this occurrence AND all future occurrences?\n\nClick OK to delete the entire series, or Cancel to keep it.'
+      : 'Are you sure you want to delete this schedule?';
+    if (window.confirm(confirmMsg)) {
       try {
         await api.delete(`/maintenance/${id}`);
         loadData();
@@ -148,6 +154,15 @@ export default function MaintenancePage() {
         return 'warning';
       default:
         return 'default';
+    }
+  };
+
+  const getRecurrenceColor = (type) => {
+    switch (type) {
+      case 'Monthly': return 'primary';
+      case 'Quarterly': return 'secondary';
+      case 'Yearly': return 'info';
+      default: return 'default';
     }
   };
 
@@ -202,6 +217,7 @@ export default function MaintenancePage() {
             <TableRow>
               <TableCell><strong>Equipment</strong></TableCell>
               <TableCell><strong>Task</strong></TableCell>
+              <TableCell><strong>Recurrence</strong></TableCell>
               <TableCell><strong>Last Service</strong></TableCell>
               <TableCell><strong>Next Due Date</strong></TableCell>
               <TableCell><strong>Status</strong></TableCell>
@@ -215,6 +231,18 @@ export default function MaintenancePage() {
               <TableRow key={schedule._id}>
                 <TableCell>{schedule.equipmentId.assetName}</TableCell>
                 <TableCell>{schedule.maintenanceTaskId.taskDescription}</TableCell>
+                <TableCell>
+                  {schedule.recurrenceType && schedule.recurrenceType !== 'None' ? (
+                    <Chip
+                      label={`${schedule.isRecurringRoot ? '🔁 ' : '↳ '}${schedule.recurrenceType}`}
+                      color={getRecurrenceColor(schedule.recurrenceType)}
+                      size="small"
+                      variant={schedule.isRecurringRoot ? 'filled' : 'outlined'}
+                    />
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">One-time</Typography>
+                  )}
+                </TableCell>
                 <TableCell>
                   {schedule.lastServiceDate
                     ? new Date(schedule.lastServiceDate).toLocaleDateString()
@@ -244,7 +272,7 @@ export default function MaintenancePage() {
                     <Button
                       size="small"
                       color="error"
-                      onClick={() => handleDelete(schedule._id)}
+                      onClick={() => handleDelete(schedule._id, schedule.isRecurringRoot)}
                     >
                       Delete
                     </Button>
@@ -312,6 +340,21 @@ export default function MaintenancePage() {
                 setFormData({ ...formData, nextDueDate: e.target.value })
               }
             />
+            <FormControl fullWidth>
+              <InputLabel>Recurrence</InputLabel>
+              <Select
+                value={formData.recurrenceType}
+                onChange={(e) =>
+                  setFormData({ ...formData, recurrenceType: e.target.value })
+                }
+                label="Recurrence"
+              >
+                <MenuItem value="None">None (One-time)</MenuItem>
+                <MenuItem value="Monthly">Monthly — same day each month</MenuItem>
+                <MenuItem value="Quarterly">Quarterly — every ~91–92 days</MenuItem>
+                <MenuItem value="Yearly">Yearly — same day each year</MenuItem>
+              </Select>
+            </FormControl>
             <FormControl fullWidth>
               <InputLabel>Status</InputLabel>
               <Select

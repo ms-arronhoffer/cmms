@@ -52,6 +52,8 @@ export const maintenanceScheduleSchema = Joi.object({
   completionNotes: Joi.string().allow('', null),
   assignedTo: Joi.string().allow('', null),
   completedAt: Joi.date().allow(null),
+  recurrenceType: Joi.string().valid('None', 'Monthly', 'Quarterly', 'Yearly').default('None'),
+  recurrenceStartDate: Joi.date().allow(null),
 });
 
 export const reportRecipientSchema = Joi.object({
