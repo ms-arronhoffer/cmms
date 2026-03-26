@@ -3,18 +3,11 @@ services:
     image: mongo:latest
     container_name: cmms-mongo
     restart: unless-stopped
-    ports:
-      - "27017:27017"
     volumes:
       - mongo_data:/data/db
       - mongo_config:/data/configdb
     networks:
       - cmms-network
-    healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
   backend:
     build:
@@ -22,9 +15,6 @@ services:
       dockerfile: Dockerfile
     container_name: cmms-backend
     restart: unless-stopped
-    depends_on:
-      mongo:
-        condition: service_healthy
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       PORT: 5000
