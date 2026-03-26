@@ -74,11 +74,17 @@ Health checks:
 
 ## 6. First Login / Data
 
-If your database is empty, run seed data once:
+If your database is empty, run seed data using the safer initialization script:
 
 ```bash
-docker compose exec backend node src/db/seed.js
+docker compose exec backend node src/db/seed-init.js
 ```
+
+This script:
+- Validates MongoDB connection before seeding
+- Explicitly sets all required user fields
+- Provides detailed logging for troubleshooting
+- Properly handles connection timeouts
 
 Default seeded users:
 - `admin / Admin123!`
@@ -143,6 +149,56 @@ docker run --rm -v cmms_mongo_data:/data -v "$PWD":/backup alpine sh -c "rm -rf 
 - Use firewall/security groups to limit inbound access
 
 ## 10. Troubleshooting
+
+### Login fails after running seed data
+
+**Symptom**: Seed script completes successfully, but login returns "Invalid username or password" or "Unauthorized".
+
+**Causes and fixes**:
+
+1. **Seeding ran but data wasn't persisted** (fresh Docker instance):
+   - Verify Mongo volume is healthy:
+   ```bash
+   docker compose logs mongo --tail 50
+   docker volume ls | grep cmms
+   ```
+   - Confirm seeded data exists:
+   ```bash
+   docker compose exec mongo mongosh cmms --eval "db.users.countDocuments()"
+   ```
+
+2. **Backend environment variables not set**:
+   - Verify backend sees the correct MONGODB_URI:
+   ```bash
+   docker compose exec backend env | grep MONGODB_URI
+   ```
+   - Should output: `MONGODB_URI=mongodb://mongo:27017/cmms`
+   - If missing, restart: `docker compose down && docker compose up --build -d`
+
+3. **Frontend still connected to old backend or wrong URL**:
+   - Hard refresh browser (`Ctrl+F5` or open in private window)
+   - Check browser DevTools → Network → POST `/api/auth/login`
+   - Verify request reaches `http://backend:5000/api` (from container perspective)
+   - From host, verify `http://localhost:5000/health` returns 200
+
+4. **Seed script failed silently**:
+   - Re-run seed with verbose logs:
+   ```bash
+   docker compose exec backend node src/db/seed-init.js 2>&1 | tail -100
+   ```
+   - Look for connection errors or validation failures
+
+5. **Password hash mismatch**:
+   - Ensure Node.js bcrypt module is properly installed in backend:
+   ```bash
+   docker compose exec backend npm ls bcryptjs
+   ```
+   - If missing, rebuild:
+   ```bash
+   docker compose down
+   docker compose up --build -d
+   docker compose exec backend node src/db/seed-init.js
+   ```
 
 ### Containers start but frontend is blank or stale
 
