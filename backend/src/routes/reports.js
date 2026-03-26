@@ -9,6 +9,23 @@ import { sendEmailReport } from '../utils/mailer.js';
 
 const router = express.Router();
 
+function parseDateInput(value, endOfDay = false) {
+  if (!value) return null;
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  if (endOfDay) {
+    parsed.setHours(23, 59, 59, 999);
+  } else {
+    parsed.setHours(0, 0, 0, 0);
+  }
+
+  return parsed;
+}
+
 /**
  * GET /api/reports/upcoming
  * Get upcoming maintenance for the next 30 days
@@ -16,22 +33,45 @@ const router = express.Router();
  */
 router.get('/upcoming', protect, async (req, res, next) => {
   try {
+    const { fromDate, toDate, includePastDue } = req.query;
+    const includePastDueFlag = includePastDue === 'true' || includePastDue === true;
+
     const today = new Date();
-    const thirtyDaysOut = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+    today.setHours(0, 0, 0, 0);
+    const defaultToDate = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+    defaultToDate.setHours(23, 59, 59, 999);
+
+    const parsedFromDate = parseDateInput(fromDate, false);
+    const parsedToDate = parseDateInput(toDate, true);
+
+    if (fromDate && !parsedFromDate) {
+      return res.status(400).json({ message: 'Invalid fromDate. Expected YYYY-MM-DD.' });
+    }
+
+    if (toDate && !parsedToDate) {
+      return res.status(400).json({ message: 'Invalid toDate. Expected YYYY-MM-DD.' });
+    }
+
+    const effectiveToDate = parsedToDate || defaultToDate;
+    const effectiveFromDate = includePastDueFlag ? null : parsedFromDate || today;
+
+    const nextDueDateQuery = { $lte: effectiveToDate };
+    if (effectiveFromDate) {
+      nextDueDateQuery.$gte = effectiveFromDate;
+    }
 
     const schedules = await MaintenanceSchedule.find({
-      nextDueDate: {
-        $gte: today,
-        $lte: thirtyDaysOut,
-      },
+      nextDueDate: nextDueDateQuery,
     })
       .populate('equipmentId', 'assetId assetName physicalLocation')
       .populate('maintenanceTaskId', 'taskDescription frequencyInterval priorityLevel')
       .sort({ nextDueDate: 1 });
 
     res.json({
-      generatedDate: today.toISOString(),
-      reportPeriodDays: 30,
+      generatedDate: new Date().toISOString(),
+      fromDate: effectiveFromDate ? effectiveFromDate.toISOString() : null,
+      toDate: effectiveToDate.toISOString(),
+      includePastDue: includePastDueFlag,
       scheduleCount: schedules.length,
       schedules,
     });
@@ -48,21 +88,37 @@ router.get('/upcoming', protect, async (req, res, next) => {
  */
 router.post('/generate', protect, async (req, res, next) => {
   try {
-    const { format = 'html', includePastDue = true } = req.body;
+    const { format = 'html', includePastDue = true, fromDate, toDate } = req.body;
 
     if (!['html', 'csv'].includes(format)) {
       return res.status(400).json({ message: 'Format must be html or csv' });
     }
 
+    const parsedFromDate = parseDateInput(fromDate, false);
+    const parsedToDate = parseDateInput(toDate, true);
+
+    if (fromDate && !parsedFromDate) {
+      return res.status(400).json({ message: 'Invalid fromDate. Expected YYYY-MM-DD.' });
+    }
+
+    if (toDate && !parsedToDate) {
+      return res.status(400).json({ message: 'Invalid toDate. Expected YYYY-MM-DD.' });
+    }
+
     const today = new Date();
-    const thirtyDaysOut = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+    today.setHours(0, 0, 0, 0);
+    const defaultToDate = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+    defaultToDate.setHours(23, 59, 59, 999);
+
+    const effectiveToDate = parsedToDate || defaultToDate;
+    const effectiveFromDate = includePastDue ? null : parsedFromDate || today;
 
     const query = {
-      nextDueDate: { $lte: thirtyDaysOut },
+      nextDueDate: { $lte: effectiveToDate },
     };
 
-    if (!includePastDue) {
-      query.nextDueDate.$gte = today;
+    if (effectiveFromDate) {
+      query.nextDueDate.$gte = effectiveFromDate;
     }
 
     const schedules = await MaintenanceSchedule.find(query)
@@ -73,7 +129,8 @@ router.post('/generate', protect, async (req, res, next) => {
     const reportData = {
       generatedDate: new Date(),
       generatedBy: req.user.userId,
-      reportPeriodDays: 30,
+      fromDate: effectiveFromDate,
+      toDate: effectiveToDate,
       scheduleCount: schedules.length,
       overdueCount: schedules.filter((s) => s.status === 'Overdue').length,
       schedules,

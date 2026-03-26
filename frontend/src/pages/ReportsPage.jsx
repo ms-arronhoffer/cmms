@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   Container,
   Paper,
@@ -23,14 +23,35 @@ import {
   Card,
   CardContent,
   Grid,
+  TextField,
+  Stack,
 } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import apiClient from '../services/api';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 
+function toIsoDate(date) {
+  const d = new Date(date);
+  const tzOffset = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - tzOffset).toISOString().slice(0, 10);
+}
+
+function safeDateLabel(value) {
+  if (!value) return 'N/A';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return 'N/A';
+  return d.toLocaleDateString();
+}
+
 export default function ReportsPage() {
-  const navigate = useNavigate();
+  const today = useMemo(() => new Date(), []);
+  const defaultFrom = useMemo(() => toIsoDate(today), [today]);
+  const defaultTo = useMemo(() => {
+    const d = new Date(today);
+    d.setDate(d.getDate() + 30);
+    return toIsoDate(d);
+  }, [today]);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [upcomingData, setUpcomingData] = useState(null);
@@ -38,19 +59,48 @@ export default function ReportsPage() {
   const [openPreview, setOpenPreview] = useState(false);
   const [previewFormat, setPreviewFormat] = useState('html');
   const [reportContent, setReportContent] = useState('');
-  const today = new Date();
-  const thirtyDaysOut = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+  const [fromDate, setFromDate] = useState(defaultFrom);
+  const [toDate, setToDate] = useState(defaultTo);
+  const [activePreset, setActivePreset] = useState('next30');
 
-  // Fetch upcoming maintenance on load
   useEffect(() => {
     fetchUpcomingMaintenance();
-  }, []);
+  }, [fromDate, toDate, includePastDue]);
+
+  const applyPreset = (preset) => {
+    const now = new Date();
+
+    if (preset === 'next7') {
+      const end = new Date(now);
+      end.setDate(end.getDate() + 7);
+      setFromDate(toIsoDate(now));
+      setToDate(toIsoDate(end));
+    }
+
+    if (preset === 'next30') {
+      const end = new Date(now);
+      end.setDate(end.getDate() + 30);
+      setFromDate(toIsoDate(now));
+      setToDate(toIsoDate(end));
+    }
+
+    if (preset === 'thisMonth') {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1);
+      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      setFromDate(toIsoDate(start));
+      setToDate(toIsoDate(end));
+    }
+
+    setActivePreset(preset);
+  };
 
   const fetchUpcomingMaintenance = async () => {
     try {
       setLoading(true);
       setError('');
-      const response = await axios.get('/api/reports/upcoming');
+      const response = await apiClient.get('/reports/upcoming', {
+        params: { fromDate, toDate, includePastDue },
+      });
       setUpcomingData(response.data);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to fetch upcoming maintenance');
@@ -64,29 +114,24 @@ export default function ReportsPage() {
     try {
       setLoading(true);
       setError('');
-      const response = await axios.post(
-        '/api/reports/generate',
-        { format, includePastDue },
+      const response = await apiClient.post(
+        '/reports/generate',
+        { format, includePastDue, fromDate, toDate },
         { responseType: format === 'csv' ? 'blob' : 'arraybuffer' }
       );
 
-      // Create download link
       const blob = new Blob([response.data], {
         type: format === 'csv' ? 'text/csv' : 'text/html',
       });
+
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute(
-        'download',
-        `maintenance-report-${new Date().toISOString().split('T')[0]}.${format}`
-      );
+      link.setAttribute('download', `maintenance-report-${fromDate}-to-${toDate}.${format}`);
       document.body.appendChild(link);
       link.click();
       link.parentNode.removeChild(link);
       window.URL.revokeObjectURL(url);
-
-      setError('');
     } catch (err) {
       setError(err.response?.data?.message || `Failed to generate ${format.toUpperCase()} report`);
       console.error(err);
@@ -99,15 +144,16 @@ export default function ReportsPage() {
     try {
       setLoading(true);
       setError('');
-      const response = await axios.post('/api/reports/generate', {
+      const response = await apiClient.post('/reports/generate', {
         format,
         includePastDue,
+        fromDate,
+        toDate,
       });
 
       if (format === 'html') {
         setReportContent(response.data);
       } else {
-        // For CSV, show the raw text in a readable format
         setReportContent(`<pre>${response.data}</pre>`);
       }
 
@@ -119,10 +165,6 @@ export default function ReportsPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleDownload = (format) => {
-    generateReport(format);
   };
 
   const getStatusColor = (status) => {
@@ -149,13 +191,52 @@ export default function ReportsPage() {
         </Alert>
       )}
 
-      {/* Report Generation Controls */}
       <Paper sx={{ p: 3, mb: 4 }}>
         <Typography variant="h6" sx={{ mb: 2 }}>
           Generate Report
         </Typography>
 
-        <Box sx={{ mb: 3 }}>
+        <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap' }}>
+          <Button variant={activePreset === 'next7' ? 'contained' : 'outlined'} onClick={() => applyPreset('next7')}>
+            Next 7 Days
+          </Button>
+          <Button variant={activePreset === 'next30' ? 'contained' : 'outlined'} onClick={() => applyPreset('next30')}>
+            Next 30 Days
+          </Button>
+          <Button variant={activePreset === 'thisMonth' ? 'contained' : 'outlined'} onClick={() => applyPreset('thisMonth')}>
+            This Month
+          </Button>
+          <Button variant={activePreset === 'custom' ? 'contained' : 'outlined'} onClick={() => setActivePreset('custom')}>
+            Custom
+          </Button>
+        </Stack>
+
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
+          <TextField
+            label="From Date"
+            type="date"
+            value={fromDate}
+            onChange={(e) => {
+              setFromDate(e.target.value);
+              setActivePreset('custom');
+            }}
+            InputLabelProps={{ shrink: true }}
+            fullWidth
+          />
+          <TextField
+            label="To Date"
+            type="date"
+            value={toDate}
+            onChange={(e) => {
+              setToDate(e.target.value);
+              setActivePreset('custom');
+            }}
+            InputLabelProps={{ shrink: true }}
+            fullWidth
+          />
+        </Stack>
+
+        <Box sx={{ mb: 2 }}>
           <FormControlLabel
             control={<Checkbox checked={includePastDue} onChange={(e) => setIncludePastDue(e.target.checked)} />}
             label="Include past due items"
@@ -167,51 +248,29 @@ export default function ReportsPage() {
             Report Window
           </Typography>
           <Typography variant="body2" color="textSecondary">
-            From: {includePastDue ? 'All past due items' : today.toLocaleDateString()}
+            From: {includePastDue ? 'All past due items' : safeDateLabel(fromDate)}
           </Typography>
           <Typography variant="body2" color="textSecondary">
-            To: {thirtyDaysOut.toLocaleDateString()}
+            To: {safeDateLabel(toDate)}
           </Typography>
         </Box>
 
         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-          <Button
-            variant="contained"
-            color="success"
-            startIcon={<FileDownloadIcon />}
-            onClick={() => handleDownload('html')}
-            disabled={loading}
-          >
+          <Button variant="contained" color="success" startIcon={<FileDownloadIcon />} onClick={() => generateReport('html')} disabled={loading}>
             Download HTML
           </Button>
-          <Button
-            variant="contained"
-            color="success"
-            startIcon={<FileDownloadIcon />}
-            onClick={() => handleDownload('csv')}
-            disabled={loading}
-          >
+          <Button variant="contained" color="success" startIcon={<FileDownloadIcon />} onClick={() => generateReport('csv')} disabled={loading}>
             Download CSV
           </Button>
-          <Button
-            variant="outlined"
-            startIcon={<VisibilityIcon />}
-            onClick={() => viewReportPreview('html')}
-            disabled={loading}
-          >
+          <Button variant="outlined" startIcon={<VisibilityIcon />} onClick={() => viewReportPreview('html')} disabled={loading}>
             Preview HTML
           </Button>
-          <Button
-            variant="outlined"
-            onClick={() => viewReportPreview('csv')}
-            disabled={loading}
-          >
+          <Button variant="outlined" onClick={() => viewReportPreview('csv')} disabled={loading}>
             Preview CSV
           </Button>
         </Box>
       </Paper>
 
-      {/* Summary Cards */}
       {upcomingData && (
         <Grid container spacing={2} sx={{ mb: 4 }}>
           <Grid item xs={12} sm={6} md={4}>
@@ -221,53 +280,17 @@ export default function ReportsPage() {
                   Total Scheduled
                 </Typography>
                 <Typography variant="h5">{upcomingData.scheduleCount}</Typography>
-                <Typography variant="caption" color="textSecondary">
-                  Next 30 days
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-
-          {upcomingData.overdueCount !== undefined && (
-            <Grid item xs={12} sm={6} md={4}>
-              <Card>
-                <CardContent>
-                  <Typography color="textSecondary" gutterBottom>
-                    Overdue Items
-                  </Typography>
-                  <Typography variant="h5" sx={{ color: upcomingData.overdueCount > 0 ? 'error.main' : 'success.main' }}>
-                    {upcomingData.overdueCount}
-                  </Typography>
-                  <Typography variant="caption" color="textSecondary">
-                    Require immediate attention
-                  </Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-          )}
-
-          <Grid item xs={12} sm={6} md={4}>
-            <Card>
-              <CardContent>
-                <Typography color="textSecondary" gutterBottom>
-                  Report Period
-                </Typography>
-                <Typography variant="h5">{upcomingData.reportPeriodDays} days</Typography>
-                <Typography variant="caption" color="textSecondary">
-                  {new Date(upcomingData.generatedDate).toLocaleDateString()}
-                </Typography>
               </CardContent>
             </Card>
           </Grid>
         </Grid>
       )}
 
-      {/* Upcoming Maintenance Table */}
       {loading ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
           <CircularProgress />
         </Box>
-      ) : upcomingData && upcomingData.schedules && upcomingData.schedules.length > 0 ? (
+      ) : upcomingData?.schedules?.length > 0 ? (
         <TableContainer component={Paper}>
           <Table>
             <TableHead>
@@ -294,14 +317,9 @@ export default function ReportsPage() {
                     />
                   </TableCell>
                   <TableCell>
-                    <Chip
-                      label={schedule.status}
-                      color={getStatusColor(schedule.status)}
-                      variant="outlined"
-                      size="small"
-                    />
+                    <Chip label={schedule.status} color={getStatusColor(schedule.status)} variant="outlined" size="small" />
                   </TableCell>
-                  <TableCell>{new Date(schedule.nextDueDate).toLocaleDateString()}</TableCell>
+                  <TableCell>{safeDateLabel(schedule.nextDueDate)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -309,11 +327,10 @@ export default function ReportsPage() {
         </TableContainer>
       ) : (
         <Paper sx={{ p: 3 }}>
-          <Typography>No upcoming maintenance found</Typography>
+          <Typography>No maintenance items found for the selected report window.</Typography>
         </Paper>
       )}
 
-      {/* Report Preview Dialog */}
       <Dialog open={openPreview} onClose={() => setOpenPreview(false)} maxWidth="md" fullWidth>
         <DialogTitle>Report Preview - {previewFormat.toUpperCase()}</DialogTitle>
         <DialogContent sx={{ maxHeight: '600px', overflow: 'auto' }}>
